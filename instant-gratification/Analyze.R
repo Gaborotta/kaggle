@@ -2,7 +2,7 @@ library(data.table)
 library(dplyr)
 library(ROCR)
 
-setwd("C:/Users/10daa/Documents/workspase/challenge_kaggle/instant-gratification")
+setwd("C:/Users/10daa/Documents/workspase/kaggle/instant-gratification")
 
 train<-fread("train.csv")
 train<-select(train,-id)
