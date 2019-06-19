@@ -7,14 +7,24 @@ library(tidyr)
 setwd("C:/Users/10daa/Documents/workspase/kaggle/instant-gratification")
 
 #ロジスティック回帰
+#データの5割を学習データとして、25回繰り返し計算し、予測値の平均値を求める。
 LR<-function(i){
-  train0<-train%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
-  result = glm(target ~., data=train0, family=binomial(link="logit"))
-  sample_data0<-train0%>%mutate(fit=predict(result,train0,type="response"))%>%select(target,fit)
-  
-  test0<-test%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
-  result_data0<-test0%>%mutate(fit=predict(result,test0,type="response"))%>%select(id,fit)
-  
+  count=25
+  train1<-train%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
+  test1<-test%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
+  sample_data0<-train1%>%mutate(fit=0)
+  result_data0<-test1%>%mutate(fit=0)
+  for(j in 1:count){
+    #学習
+    train0<-train1%>%sample_frac(size = 0.5)
+    result = glm(target ~., data=train0, family=binomial(link="logit"))
+    
+    #予測
+    sample_data0<-sample_data0%>%mutate(fit=fit+predict(result,train1,type="response")/count)
+    result_data0<-result_data0%>%mutate(fit=fit+predict(result,test1,type="response")/count)
+  }
+  sample_data0<-sample_data0%>%select(target,fit)
+  result_data0<-result_data0%>%select(id,fit)
   return(list(index=i,train=sample_data0,test=result_data0))
 }
 
@@ -54,7 +64,7 @@ for (i in 1:512) {
 pred <- prediction(train_data$fit, train_data$target)
 auc.tmp <- performance(pred,"auc")
 auc <- as.numeric(auc.tmp@y.values)
-auc
+print(auc)
 
 #結果ファイル出力
 submission<-fread("sample_submission.csv")
