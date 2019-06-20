@@ -25,7 +25,7 @@ LR<-function(i){
     train0<-train1%>%sample_frac(size = 1-1/count)
     train_x<-as.matrix(train0%>%select(-target))
     train_y<-as.matrix(train0%>%select(target))
-    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0.05)
+    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0.025)
     #result = glmnet(target ~., data=train0, family=binomial(link="logit"))
     
     #予測
@@ -46,6 +46,7 @@ LR<-function(i){
 #並列処理準備
 print(paste(Sys.time(),"Set Parallel",sep = " : "))
 cores = detectCores(logical=TRUE)
+print(paste("core",cores,sep = ":"))
 cluster = makeCluster(cores, "PSOCK")
 clusterEvalQ(cluster,{
   library(data.table)
@@ -61,7 +62,7 @@ clusterExport(cluster,"test")
 num<-0:511
 print(paste(Sys.time(),"Run Parallel",sep = " : "))
 system.time(par_data <- parLapply(cluster,num,LR))
-stopCluster(cluster)
+#stopCluster(cluster)
 
 #出力データ整理
 print(paste(Sys.time(),"Shape Data",sep = " : "))
@@ -82,6 +83,6 @@ print(auc)
 #結果ファイル出力
 print(paste(Sys.time(),"Output File",sep = " : "))
 submission<-submission%>%left_join(test_data,by="id")%>%select(id,fit)%>%rename(target=fit)
-write.csv(submission,"submission_005.csv",row.names = F)
+write.csv(submission,"submission_0025.csv",row.names = F)
 
 print(paste(Sys.time(),"Finish",sep = " : "))
