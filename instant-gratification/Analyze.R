@@ -37,7 +37,7 @@ LR<-function(i){
     train0<-data.table(analysis(train_split))
     train_x<-as.matrix(train0%>%select(-target,-id))
     train_y<-as.matrix(train0%>%select(target))
-    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0)
+    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0.02)
     #result = glmnet(target ~., data=train0, family=binomial(link="logit"))
     
     #交差検証データで予測
