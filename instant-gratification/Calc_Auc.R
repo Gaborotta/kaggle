@@ -1,4 +1,4 @@
-ans<-fread("submission.csv")
+ans<-fread("submission_ans.csv")
 ans_min<-fread("submission_min.csv")
 ans_max<-fread("submission_max.csv")
 ans_mean<-fread("submission_mean.csv")
@@ -9,6 +9,7 @@ ans_001<-fread("submission_001.csv")
 ans_0025<-fread("submission_0025.csv")
 ans_003<-fread("submission_003.csv")
 ans_002<-fread("submission_002.csv")
+ans_cross<-fread("submission_cross.csv")
 
 ans<-ans%>%mutate(target= ifelse(target >= 0.5, 1, 0 ))
 
