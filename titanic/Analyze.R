@@ -112,22 +112,57 @@ dev.off()
 #とりあえず全変数でロジスティック回帰
 result1<-glm(Survived~.,data = train1,family = binomial)
 summary(result1)
-
-#交互作用がありそうな変数を追加
-result2<-glm(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+Is_Child:With_Family+Age:With_Family+SibSp:With_Family+Parch:With_Family,data = train1,family = binomial)
-summary(result2)
+pred <- prediction(predict(result1), train1$Survived)
+auc.tmp <- performance(pred,"auc")
+auc1 <- as.numeric(auc.tmp@y.values)
 
 #AICに基づいて変数選択
-result3<-step(result2)
+result2<-step(result1)
+summary(result2)
+pred <- prediction(predict(result2), train1$Survived)
+auc.tmp <- performance(pred,"auc")
+auc2 <- as.numeric(auc.tmp@y.values)
+
+#交互作用がありそうな変数を追加
+result3<-glm(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+Is_Child:With_Family+Age:With_Family+SibSp:With_Family+Parch:With_Family,data = train1,family = binomial)
 summary(result3)
+pred <- prediction(predict(result3), train1$Survived)
+auc.tmp <- performance(pred,"auc")
+auc3 <- as.numeric(auc.tmp@y.values)
+
+#AICに基づいて変数選択
+result4<-step(result3)
+summary(result4)
+pred <- prediction(predict(result4), train1$Survived)
+auc.tmp <- performance(pred,"auc")
+auc4 <- as.numeric(auc.tmp@y.values)
+
+#交互作用全て
+result5<-glm(Survived~(.)^2,data = train1,family = binomial)
+summary(result5)
+pred <- prediction(predict(result5), train1$Survived)
+auc.tmp <- performance(pred,"auc")
+auc5 <- as.numeric(auc.tmp@y.values)
+
+#AICに基づいて変数選択
+result6<-step(result5)
+summary(result6)
+pred <- prediction(predict(result6), train1$Survived)
+auc.tmp <- performance(pred,"auc")
+auc6 <- as.numeric(auc.tmp@y.values)
 
 #パラメータ考察
 #上位階級が生き残りやすい
 #女性が生き残りやすい
 #子供が生き残りやすい。特に幼児。
 
-
-
+#モデルAUC比較
+print(paste("result1",auc1,sep = " : "))
+print(paste("result2",auc2,sep = " : "))
+print(paste("result3",auc3,sep = " : "))
+print(paste("result4",auc4,sep = " : "))
+print(paste("result5",auc5,sep = " : "))
+print(paste("result6",auc6,sep = " : "))
 
 #ロジスティック回帰
 #データの5割を学習データとして、25回繰り返し計算し、予測値の平均値を求める。
