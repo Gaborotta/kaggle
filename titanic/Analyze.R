@@ -19,22 +19,32 @@ submission<-fread("./input/gender_submission.csv")
 #pclass:社会経済的地位（1が上位）
 #sibsp:配偶者or兄弟の数
 #parch:親or子供の数
+summary(train)
+summary(test)
+
+#欠損値確認
+sapply(train,function(y) sum(y==""| is.na(y)))
+
+#相関関係確認
 pdf("Rplot.pdf",width = 50,height = 50)
 ggpairs(train%>%select(-PassengerId,-Name,-Ticket,-Cabin)%>%mutate(Survived=factor(Survived)))
 dev.off()
 
-#ID,Name、Ticketはそれ自体は無関係判断。cabinは欠損が多い。
-#Embarkedは2名ほど欠損あり。除く
+
+#cabinは欠損が多い。B～はあるが、Aがないから？あとTというのが一人だけいる。邪魔なのでAにしておく。死んでるし。
+#Embarkedは2名ほど欠損あり。中央値に変更。
+#年齢NAが結構いる。補完の必要あり。
 #Ticketが同一　⇒　一緒に購入？　名前を見る限り家族の可能性大
 #同一購入者数を新規変数として作る。
 #cabinは頭文字の種別、無記名で新規変数作っとく。
 #F G〇〇,F E〇〇といった記号が２つの人物がいる。これは後者の数字の前の記号をあてにした方が良さげかな。
 #子供の境界は10歳くらいか？
-#年齢NAが結構いる。除くか。
+#ID,Name、Ticketはそれ自体は無関係判断。
 
 #データ前処理
-#EmbarkedがNAのデータを削除
-train0<-train%>%filter(Embarked != "",!is.na(Age))
+#EmbarkedがNAのデータを中央値に変更、Cabinが空白・TをAに変更。
+train0<-train%>%mutate(Embarked=ifelse(Embarked == "",median(Embarked),Embarked),
+                       Cabin=ifelse(Cabin==""|Cabin=="T","A",Cabin))
 
 #同じチケットを買った人数を算出
 party_num<-train%>%group_by(Ticket)%>%summarise(Party_Num=n())
@@ -51,16 +61,36 @@ train0<-train0%>%mutate(Family=SibSp+Parch+1,Not_With_Family=Family-Party_Num)
 train0<-train0%>%mutate(With_Friends=ifelse(Not_With_Family<=0,Party_Num-Family,0),Not_With_Family=ifelse(Not_With_Family<=0,0,Not_With_Family))
 train0<-train0%>%mutate(With_Family=Family-Not_With_Family)
 
-#子供フラグの作成
-train0<-train0%>%mutate(Is_Child=ifelse(Age<=10,1,0))
-
 #不要変数の削除
 train0<-train0%>%select(-Name,-Ticket,-PassengerId,-Family,-Not_With_Family,Party_Num,-Party_Num)
+
+#Ageは他列の値を参考に重回帰で求めておく。
+#ID,Name、Ticketはそれ自体は無関係判断。
+#重回帰モデルは交互作用ありと無し、AIC最適化有無で比較。
+#交互作用ありではEmbarked:CabinとCabin:With_FriendsでNAが出たので消去しておく。
+age_train<-train0%>%select(-Survived)%>%filter(!is.na(Age))
+age_result1<-lm(Age~(.)^2-Embarked:Cabin-Cabin:With_Friends,age_train)
+#age_result2<-lm(Age~.,age_train)
+age_result3<-step(age_result1)
+#age_result4<-step(age_result2)
+
+#summary(age_result1)
+#summary(age_result2)
+summary(age_result3)
+#summary(age_result4)
+
+#result3が最も決定係数が大きかったので採用。
+train0<-train0%>%mutate(Age=ifelse(is.na(Age),predict(age_result3,train0),Age))
+
+#子供フラグの作成、年齢が負の値が発生したので0歳として処理。
+train0<-train0%>%mutate(Age=ifelse(Age<0,0,Age),Is_Child=ifelse(Age<=10,1,0))
 
 #データ内容再確認
 pdf("Rplot0.pdf",width = 50,height = 50)
 ggpairs(train0%>%mutate(Survived=factor(Survived),Is_Child=factor(Is_Child)))
 dev.off()
+
+
 
 #With_Friendsは大半が0なので、0人か1人か2人以上か分類
 train1<-train0%>%mutate(With_Friends=ifelse(With_Friends>=2,2,With_Friends))
