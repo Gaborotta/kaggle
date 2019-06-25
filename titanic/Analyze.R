@@ -2,7 +2,7 @@ library(GGally)
 library(data.table)
 library(dplyr)
 library(tidyr)
-
+library(useful)
 library(ROCR)
 library(parallel)
 library(glmnet)
@@ -90,15 +90,16 @@ pdf("Rplot0.pdf",width = 50,height = 50)
 ggpairs(train0%>%mutate(Survived=factor(Survived),Is_Child=factor(Is_Child)))
 dev.off()
 
-
+#Sibsp,Parchは大半が0なので、0人か1人か2人以上か分類
+train1<-train0%>%mutate(SibSp=ifelse(SibSp>=2,2,SibSp),Parch=ifelse(Parch>=2,2,Parch))
 
 #With_Friendsは大半が0なので、0人か1人か2人以上か分類
-train1<-train0%>%mutate(With_Friends=ifelse(With_Friends>=2,2,With_Friends))
+train1<-train1%>%mutate(With_Friends=ifelse(With_Friends>=2,2,With_Friends))
 #With_Familyは1人、2人、3人、4人以上でまとめる。
 train1<-train1%>%mutate(With_Family=ifelse(With_Family>=4,4,With_Family))
 
 #それぞれfactor型に変換
-train1<-train1%>%mutate(With_Friends=factor(With_Friends),With_Family=factor(With_Family),Survived=factor(Survived),Is_Child=factor(Is_Child))
+train1<-train1%>%mutate(With_Friends=factor(With_Friends),With_Family=factor(With_Family),Survived=factor(Survived),Is_Child=factor(Is_Child),SibSp=factor(SibSp),Parch=factor(Parch),Pclass=factor(Pclass))
 
 #もう一度確認
 pdf("Rplot1.pdf",width = 50,height = 50)
@@ -109,22 +110,22 @@ dev.off()
 #party_numとSibSp,Parchも同様。
 #多重共線性に気を付けて変数選択しましょう。
 
-#とりあえず全変数でロジスティック回帰
-result1<-glm(Survived~.,data = train1,family = binomial)
-summary(result1)
-pred <- prediction(predict(result1), train1$Survived)
-auc.tmp <- performance(pred,"auc")
-auc1 <- as.numeric(auc.tmp@y.values)
-
-#AICに基づいて変数選択
-result2<-step(result1)
-summary(result2)
-pred <- prediction(predict(result2), train1$Survived)
-auc.tmp <- performance(pred,"auc")
-auc2 <- as.numeric(auc.tmp@y.values)
+# #とりあえず全変数でロジスティック回帰
+# result1<-glm(Survived~.,data = train1,family = binomial)
+# summary(result1)
+# pred <- prediction(predict(result1), train1$Survived)
+# auc.tmp <- performance(pred,"auc")
+# auc1 <- as.numeric(auc.tmp@y.values)
+# 
+# #AICに基づいて変数選択
+# result2<-step(result1)
+# summary(result2)
+# pred <- prediction(predict(result2), train1$Survived)
+# auc.tmp <- performance(pred,"auc")
+# auc2 <- as.numeric(auc.tmp@y.values)
 
 #交互作用がありそうな変数を追加
-result3<-glm(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+Is_Child:With_Family+Age:With_Family+SibSp:With_Family+Parch:With_Family,data = train1,family = binomial)
+result3<-glm(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family,data = train1,family = binomial)
 summary(result3)
 pred <- prediction(predict(result3), train1$Survived)
 auc.tmp <- performance(pred,"auc")
@@ -137,37 +138,155 @@ pred <- prediction(predict(result4), train1$Survived)
 auc.tmp <- performance(pred,"auc")
 auc4 <- as.numeric(auc.tmp@y.values)
 
-#交互作用全て
-result5<-glm(Survived~(.)^2,data = train1,family = binomial)
-summary(result5)
-pred <- prediction(predict(result5), train1$Survived)
-auc.tmp <- performance(pred,"auc")
-auc5 <- as.numeric(auc.tmp@y.values)
-
-#AICに基づいて変数選択
-result6<-step(result5)
-summary(result6)
-pred <- prediction(predict(result6), train1$Survived)
-auc.tmp <- performance(pred,"auc")
-auc6 <- as.numeric(auc.tmp@y.values)
-
-#パラメータ考察
-#上位階級が生き残りやすい
-#女性が生き残りやすい
-#子供が生き残りやすい。特に幼児。
+# #交互作用全て
+# result5<-glm(Survived~(.)^2,data = train1,family = binomial)
+# summary(result5)
+# pred <- prediction(predict(result5), train1$Survived)
+# auc.tmp <- performance(pred,"auc")
+# auc5 <- as.numeric(auc.tmp@y.values)
+# 
+# #AICに基づいて変数選択
+# result6<-step(result5)
+# summary(result6)
+# pred <- prediction(predict(result6), train1$Survived)
+# auc.tmp <- performance(pred,"auc")
+# auc6 <- as.numeric(auc.tmp@y.values)
 
 #モデルAUC比較
-print(paste("result1",auc1,sep = " : "))
-print(paste("result2",auc2,sep = " : "))
-print(paste("result3",auc3,sep = " : "))
-print(paste("result4",auc4,sep = " : "))
-print(paste("result5",auc5,sep = " : "))
-print(paste("result6",auc6,sep = " : "))
+#print(paste("result1",auc1,AIC(result1),sep = " : "))
+#print(paste("result2",auc2,AIC(result2),sep = " : "))
+print(paste("result3",auc3,AIC(result3),sep = " : "))
+print(paste("result4",auc4,AIC(result4),sep = " : "))
+#print(paste("result5",auc5,AIC(result5),sep = " : "))
+#print(paste("result6",auc6,AIC(result6),sep = " : "))
+
+#result5はwarning発生のため却下。6はAICが大きすぎるので却下。
+#AUCとAICから判断してresult4を採用。
+
+#パラメータ考察
+summary(result4)
+#パラメータが有意なものについてのみ考察。
+#上位階級が生き残りやすい
+#女性が生き残りやすい
+#若い人が生き残りやすい
+#Embarked Sが生き残りにくい？謎
+#CabinB,D,Eが生き残りやすい
+#2名以上の知人とチケットを買った人は生き残りやすい。
+#4名以上の家族とチケットを買った人は生き残りにくい。
+#男性でも子供だと生き残りやすい。
+#有意ではないが、家族と一緒の子どもは生き残りにくいのが印象的。
+
+
+#機械学習構築
+#ハイパーパラメータ子どもの年齢はグリッドサーチ
+
 
 #ロジスティック回帰
-#データの5割を学習データとして、25回繰り返し計算し、予測値の平均値を求める。
+#データの8割を学習データとして、10交差検証し、予測値の平均値を求める。
 LR<-function(i){
+  
+  i=10
+  train1<-train1%>%mutate(Is_Child=ifelse(Age<=i,1,0),Is_Child=factor(Is_Child))
+  
+  #k交差検証準備
+  count=10
+  df_split <- initial_split(train1, prop = 0.8)
+  train_train<-training(df_split)
+  train_test<-testing(df_split)
+  train_folds <- vfold_cv(train_train, v = count)
+  
+  #結果変数初期化
+  cross_test_result<-data.table()
+  train_test_result<-train_test%>%mutate(fit=0)
+  
+  #学習
+  #glmnetでL1正則化
+  for (train_split in train_folds$splits){
+    
+    train0<-data.table(analysis(train_split))
+    #train_x<-as.matrix(train0%>%select(-Survived))
+    #train_y<-as.matrix(train0%>%select(Survived))
+    train_x<-build.x(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family,data = train0)
+    train_y<-build.y(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family,data = train0)
+    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0.02)
 
+    #交差検証データで予測
+    train_test0<-data.table(assessment(train_split))
+    train_test_x<-build.x(Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family,data = train_test0)
+    #train_test_x<-as.matrix(train_test0%>%select(-Survived))
+    train_predict<-predict(result,train_test_x,s=result$lambda,type='response')
+    train_test0<-train_test0%>%mutate(fit=train_predict)
+    cross_test_result<-cross_test_result%>%bind_rows(train_test0)
+    
+    #train_testで予測
+    new_train_test_x<-as.matrix(train_test%>%select(-Survived))
+    train_test_predict<-predict(result,new_train_test_x,s=result$lambda,type='response')
+    train_test_result<-train_test_result%>%mutate(fit=fit+train_test_predict[,1]/count)
+  }
+  
+  cross_test_result<-cross_test_result%>%select(Survived,fit)
+  train_test_result<-train_test_result%>%select(Survived,fit)
+  return(list(child_age=i,cross_train=cross_test_result,train=train_test_result))
+}
+
+
+
+#並列処理準備
+print(paste(Sys.time(),"Set Parallel",sep = " : "))
+cores = detectCores(logical=TRUE)
+#cores=4
+print(paste("core",cores,sep = ":"))
+cluster = makeCluster(cores, "PSOCK")
+clusterEvalQ(cluster,{
+  library(data.table)
+  library(dplyr)
+  library(ROCR)
+  library(glmnet)
+  library(rsample)
+  library(useful)
+})
+clusterSetRNGStream(cluster,129)
+clusterExport(cluster,"train1")
+
+
+#並列処理実行
+num<-1:20
+print(paste(Sys.time(),"Run Parallel",sep = " : "))
+system.time(par_data <- parLapply(cluster,num,LR))
+stopCluster(cluster)
+
+#出力データ整理
+print(paste(Sys.time(),"Shape Data",sep = " : "))
+cross_train_data<-data.table()
+train_test_data<-data.table()
+for (i in 1:512) {
+  cross_train_data<-bind_rows(cross_train_data,par_data[[i]]["cross_train"])
+  train_test_data<-bind_rows(train_test_data,par_data[[i]]["train"])
+}
+
+#trainのAUC計算
+print(paste(Sys.time(),"Calc Train AUC",sep = " : "))
+
+pred <- prediction(cross_train_data$fit, cross_train_data$Survived)
+auc.tmp <- performance(pred,"auc")
+auc <- as.numeric(auc.tmp@y.values)
+print(paste("cross_train_data",auc,sep = ":"))
+
+pred <- prediction(train_test_data$fit, train_test_data$Survived)
+auc.tmp <- performance(pred,"auc")
+auc <- as.numeric(auc.tmp@y.values)
+print(paste("train_test_data",auc,sep = ":"))
+
+#結果ファイル出力
+print(paste(Sys.time(),"Output File",sep = " : "))
+write.csv(test_data,"submission_cross.csv",row.names = F)
+
+print(paste(Sys.time(),"Finish",sep = " : "))
+
+
+
+LR<-function(i){
+  
   train1<-train%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
   test1<-test%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
   
@@ -217,57 +336,4 @@ LR<-function(i){
   return(list(index=i,cross_train=cross_test_result,train=train_test_result,test=result_data))
 }
 
-
-#並列処理準備
-print(paste(Sys.time(),"Set Parallel",sep = " : "))
-#cores = detectCores(logical=TRUE)
-cores=4
-print(paste("core",cores,sep = ":"))
-cluster = makeCluster(cores, "PSOCK")
-clusterEvalQ(cluster,{
-  library(data.table)
-  library(dplyr)
-  library(ROCR)
-  library(glmnet)
-  library(rsample)
-})
-clusterSetRNGStream(cluster,129)
-clusterExport(cluster,"train")
 clusterExport(cluster,"test")
-
-#並列処理実行
-num<-0:511
-print(paste(Sys.time(),"Run Parallel",sep = " : "))
-system.time(par_data <- parLapply(cluster,num,LR))
-stopCluster(cluster)
-
-#出力データ整理
-print(paste(Sys.time(),"Shape Data",sep = " : "))
-cross_train_data<-data.table()
-train_test_data<-data.table()
-test_data<-data.table()
-for (i in 1:512) {
-  cross_train_data<-bind_rows(cross_train_data,par_data[[i]]["cross_train"])
-  train_test_data<-bind_rows(train_test_data,par_data[[i]]["train"])
-  test_data<-bind_rows(test_data,par_data[[i]]["test"])
-}
-
-#trainのAUC計算
-print(paste(Sys.time(),"Calc Train AUC",sep = " : "))
-
-pred <- prediction(cross_train_data$fit, cross_train_data$target)
-auc.tmp <- performance(pred,"auc")
-auc <- as.numeric(auc.tmp@y.values)
-print(paste("cross_train_data",auc,sep = ":"))
-
-pred <- prediction(train_test_data$fit, train_test_data$target)
-auc.tmp <- performance(pred,"auc")
-auc <- as.numeric(auc.tmp@y.values)
-print(paste("train_test_data",auc,sep = ":"))
-
-#結果ファイル出力
-print(paste(Sys.time(),"Output File",sep = " : "))
-submission<-submission%>%left_join(test_data,by="id")%>%select(id,fit)%>%rename(target=fit)
-write.csv(submission,"submission_cross.csv",row.names = F)
-
-print(paste(Sys.time(),"Finish",sep = " : "))
