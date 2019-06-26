@@ -180,7 +180,7 @@ clusterExport(cluster,"LR")
 clusterExport(cluster,"calc_auc")
 
 #並列処理実行
-count=160
+count=1600
 num=1:count
 print(paste(Sys.time(),"Run Parallel",sep = " : "))
 system.time(par_data <- parLapply(cluster,num,get_LR_result))
@@ -195,6 +195,8 @@ for(data in par_data){
 
 #結果ファイル出力
 print(paste(Sys.time(),"Output File",sep = " : "))
-write.csv(mean_test_result,"submission_cross.csv",row.names = F)
+mean_test_result<-mean_test_result%>%rename(Survived=fit)
+mean_test_result<-mean_test_result%>%mutate(Survived=ifelse(Survived>=0.5,1,0))
+write.csv(mean_test_result,"submission.csv",row.names = F)
 
 print(paste(Sys.time(),"Finish",sep = " : "))
