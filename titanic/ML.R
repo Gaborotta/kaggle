@@ -67,54 +67,73 @@ Prep<-function(train){
 
 #ロジスティック回帰
 #データの8割を学習データとして、10交差検証し、予測値の平均値を求める。
-LR<-function(i){
+LR<-function(k){
   
-  #i=10
-  train_i<-train1%>%mutate(Is_Child=ifelse(Age<=i,1,0),Is_Child=factor(Is_Child))
-  train_formula<-Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family
-  train_i_x<-as.matrix(build.x(train_formula,data = train_i)[,-1])
-  train_i_y<-as.matrix(build.y(train_formula,data = train_i))
-  train_i<-data.table(train_i_y,train_i_x)%>%rename(Survived=V1)
+  AUC<-data.table()
   
-  #k交差検証準備
-  count=10
-  df_split <- initial_split(train_i, prop = 0.8)
-  train_train<-training(df_split)
-  train_test<-testing(df_split)
-  train_folds <- vfold_cv(train_train, v = count)
-  
-  #結果変数初期化
-  cross_test_result<-data.table()
-  train_test_result<-train_test%>%mutate(fit=0)
-  
-  #学習
-  #glmnetでL1正則化
-  for (train_split in train_folds$splits){
-    #train_split<-train_folds$splits[[1]]  
+  for(row_num in 1:nrow(grid_data)){
+    #i=10
+    i=grid_data$child_age[[row_num]]
+    lambda=grid_data$lambda[[row_num]]
+    train_i<-train1%>%mutate(Is_Child=ifelse(Age<=i,1,0),Is_Child=factor(Is_Child))
+    train_formula<-Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family
+    train_i_x<-as.matrix(build.x(train_formula,data = train_i)[,-1])
+    train_i_y<-as.matrix(build.y(train_formula,data = train_i))
+    train_i<-data.table(train_i_y,train_i_x)%>%rename(Survived=V1)
     
-    train0<-data.table(analysis(train_split))
-    train_x<-as.matrix(train0%>%select(-Survived))
-    train_y<-as.matrix(train0%>%select(Survived))
-    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0.02)
+    #k交差検証準備
+    count=10
+    df_split <- initial_split(train_i, prop = 0.8)
+    train_train<-training(df_split)
+    train_test<-testing(df_split)
+    train_folds <- vfold_cv(train_train, v = count)
     
-    #交差検証データで予測
-    train_test0<-data.table(assessment(train_split))
-    train_test_x<-as.matrix(train_test0%>%select(-Survived))
-    train_predict<-predict(result,train_test_x,s=result$lambda,type='response')
-    train_test0<-train_test0%>%mutate(fit=train_predict)
-    cross_test_result<-cross_test_result%>%bind_rows(train_test0)
+    #結果変数初期化
+    cross_test_result<-data.table()
+    train_test_result<-train_test%>%mutate(fit=0)
     
-    #train_testで予測
-    new_train_test_x<-as.matrix(train_test%>%select(-Survived))
-    train_test_predict<-predict(result,new_train_test_x,s=result$lambda,type='response')
-    train_test_result<-train_test_result%>%mutate(fit=fit+train_test_predict[,1]/count)
+    #学習
+    #glmnetでL1正則化
+    for (train_split in train_folds$splits){
+      #train_split<-train_folds$splits[[1]]  
+      
+      train0<-data.table(analysis(train_split))
+      train_x<-as.matrix(train0%>%select(-Survived))
+      train_y<-as.matrix(train0%>%select(Survived))
+      result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = lambda)
+      
+      #交差検証データで予測
+      train_test0<-data.table(assessment(train_split))
+      train_test_x<-as.matrix(train_test0%>%select(-Survived))
+      train_predict<-predict(result,train_test_x,s=result$lambda,type='response')
+      train_test0<-train_test0%>%mutate(fit=train_predict)
+      cross_test_result<-cross_test_result%>%bind_rows(train_test0)
+      
+      #train_testで予測
+      new_train_test_x<-as.matrix(train_test%>%select(-Survived))
+      train_test_predict<-predict(result,new_train_test_x,s=result$lambda,type='response')
+      train_test_result<-train_test_result%>%mutate(fit=fit+train_test_predict[,1]/count)
+    }
+    
+    cross_test_result<-cross_test_result%>%select(Survived,fit)
+    train_test_result<-train_test_result%>%select(Survived,fit)
+    AUC<-AUC%>%bind_rows(data.table(
+      child_age=i,
+      lambda=lambda,
+      cross_auc=calc_auc(cross_test_result),
+      train_auc=calc_auc(train_test_result)
+    ))
   }
-  
-  cross_test_result<-cross_test_result%>%select(Survived,fit)
-  train_test_result<-train_test_result%>%select(Survived,fit)
-  return(list(child_age=i,cross_train=cross_test_result,train=train_test_result))
+  return(AUC)
 }
 
+#trainのAUC計算
+calc_auc<-function(data){
+  pred <- prediction(data$fit, data$Survived)
+  auc.tmp <- performance(pred,"auc")
+  auc <- as.numeric(auc.tmp@y.values)
+  return(auc)
+}
 
 #前処理実行
 train1<-Prep(train)
@@ -135,91 +154,32 @@ clusterEvalQ(cluster,{
 })
 clusterSetRNGStream(cluster,129)
 clusterExport(cluster,"train1")
+clusterExport(cluster,"calc_auc")
 
+#ハイパーパラメータグリッド作成
+grid_data<-data.table(child_age=rep(1:30,each=30),lambda=rep(seq(0.01,0.30,0.01),30))
+clusterExport(cluster,"grid_data")
 
 #並列処理実行
-num<-1:20
+num=1:16
 print(paste(Sys.time(),"Run Parallel",sep = " : "))
 system.time(par_data <- parLapply(cluster,num,LR))
 stopCluster(cluster)
 
-#trainのAUC計算
+
 print(paste(Sys.time(),"Calc Train AUC",sep = " : "))
-
-train_auc<-data.table()
-train_test_auc<-data.table()
-for(result_data in par_data){
-  
+AUC_DATA<-data.table()
+for(data in par_data){
+  AUC_DATA<-AUC_DATA%>%bind_rows(data)
 }
 
-pred <- prediction(cross_train_data$fit, cross_train_data$Survived)
-auc.tmp <- performance(pred,"auc")
-auc <- as.numeric(auc.tmp@y.values)
-print(paste("cross_train_data",auc,sep = ":"))
-
-pred <- prediction(train_test_data$fit, train_test_data$Survived)
-auc.tmp <- performance(pred,"auc")
-auc <- as.numeric(auc.tmp@y.values)
-print(paste("train_test_data",auc,sep = ":"))
-
-#結果ファイル出力
-print(paste(Sys.time(),"Output File",sep = " : "))
-write.csv(test_data,"submission_cross.csv",row.names = F)
-
-print(paste(Sys.time(),"Finish",sep = " : "))
+sums<-AUC_DATA%>%group_by(child_age,lambda)%>%summarise(
+  cross_mean=mean(cross_auc),
+  train_mean=mean(train_auc),
+  cross_var=var(cross_auc),
+  train_var=var(train_auc))
 
 
+#Trainの平均AUCが最大かつ分散が小さいの組み合わせ、Child=14,Lambda=0.02を採用
 
-LR<-function(i){
-  
-  train1<-train%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
-  test1<-test%>%filter(`wheezy-copper-turtle-magic`==i)%>%select(-`wheezy-copper-turtle-magic`)
-  
-  #k交差検証準備
-  count=25
-  df_split <- initial_split(train1, prop = 0.8)
-  train_train<-training(df_split)
-  train_test<-testing(df_split)
-  train_folds <- vfold_cv(train_train, v = count)
-  
-  #結果変数初期化
-  cross_test_result<-data.table()
-  train_test_result<-train_test%>%mutate(fit=0)
-  result_data<-test1%>%mutate(fit=0)
-  
-  #学習
-  #glmnetでL1正則化
-  for (train_split in train_folds$splits){
-    #train0<-train1%>%sample_frac(size = 1-1/count)
-    train0<-data.table(analysis(train_split))
-    train_x<-as.matrix(train0%>%select(-target,-id))
-    train_y<-as.matrix(train0%>%select(target))
-    result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = 0.02)
-    #result = glmnet(target ~., data=train0, family=binomial(link="logit"))
-    
-    #交差検証データで予測
-    train_test0<-data.table(assessment(train_split))
-    train_test_x<-as.matrix(train_test0%>%select(-target,-id))
-    train_predict<-predict(result,train_test_x,s=result$lambda,type='response')
-    train_test0<-train_test0%>%mutate(fit=train_predict)
-    cross_test_result<-cross_test_result%>%bind_rows(train_test0)
-    
-    #train_testで予測
-    new_train_test_x<-as.matrix(train_test%>%select(-target,-id))
-    train_test_predict<-predict(result,new_train_test_x,s=result$lambda,type='response')
-    train_test_result<-train_test_result%>%mutate(fit=fit+train_test_predict[,1]/count)
-    
-    #テストデータで予測
-    new_test_x<-as.matrix(test1%>%select(-id))
-    test_predict<-predict(result,new_test_x,s=result$lambda,type='response')
-    result_data<-result_data%>%mutate(fit=fit+test_predict[,1]/count)
-  }
-  
-  cross_test_result<-cross_test_result%>%select(id,target,fit)
-  train_test_result<-train_test_result%>%select(id,target,fit)
-  result_data<-result_data%>%select(id,fit)
-  return(list(index=i,cross_train=cross_test_result,train=train_test_result,test=result_data))
-}
-
-clusterExport(cluster,"test")
-
+write.csv(AUC_DATA,"AUC_DATA.csv")
