@@ -180,6 +180,6 @@ sums<-AUC_DATA%>%group_by(child_age,lambda)%>%summarise(
   train_var=var(train_auc))
 
 
-#Trainの平均AUCが最大かつ分散が小さいの組み合わせ、Child=14,Lambda=0.02を採用
+#Trainの平均AUCが最大かつ分散が小さいの組み合わせ、Child=11,Lambda=0.01を採用
 
 write.csv(AUC_DATA,"AUC_DATA.csv")

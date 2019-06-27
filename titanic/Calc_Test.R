@@ -97,6 +97,7 @@ LR<-function(child_age,lambda){
   cross_test_result<-data.table()
   train_test_result<-train_test%>%mutate(fit=0)
   test_result<-test_i%>%mutate(fit=0)
+  train_model<-list()
   
   #学習
   #glmnetでL1正則化
@@ -107,6 +108,7 @@ LR<-function(child_age,lambda){
     train_x<-as.matrix(train0%>%select(-Survived,-PassengerId))
     train_y<-as.matrix(train0%>%select(Survived))
     result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = lambda)
+    train_model<-c(train_model,list(result))
     
     #交差検証データで予測
     train_test0<-data.table(assessment(train_split))
@@ -131,7 +133,7 @@ LR<-function(child_age,lambda){
   train_test_result<-train_test_result%>%select(PassengerId,Survived,fit)
   test_result<-test_result%>%select(PassengerId,fit)
   
-  return(list(model=result,cross_train=cross_test_result,train=train_test_result,test=test_result))
+  return(list(model=train_model,cross_train=cross_test_result,train=train_test_result,test=test_result))
 }
 
 #trainのAUC計算
@@ -145,7 +147,7 @@ calc_auc<-function(data){
 #回帰して予測結果、AUC、モデルを返す関数
 get_LR_result<-function(k){
   #回帰
-  result_data<-LR(14,0.02)
+  result_data<-LR(11,0.01)
   
   #TrainのAUC計算
   result_data=c(result_data,cross_auc=calc_auc(result_data$cross_train),train_auc=calc_auc(result_data$train))
@@ -187,19 +189,23 @@ stopCluster(cluster)
 
 #データ加工
 mean_test_result<-test%>%mutate(fit=0)%>%select(PassengerId,fit)
-coef0<-as.matrix(coef(par_data[[1]]$model))
+coef0<-as.matrix(coef(par_data[[1]]$model[[1]]))
 mean_model_coef<-data.table(name=row.names(coef0))%>%mutate(coef=0,used_rate=0)
 for(data in par_data){
   mean_test_result<-mean_test_result%>%mutate(fit=fit+data$test$fit/count)
-  coef0<-data.table(as.matrix(coef(data$model)))
-  mean_model_coef<-mean_model_coef%>%mutate(
-    coef=coef+coef0$s0/count,
-    used_rate=ifelse(coef0$s0!=0,used_rate+1/count,used_rate))
+  for(model0 in data$model){
+    coef0<-data.table(as.matrix(coef(model0)))
+    mean_model_coef<-mean_model_coef%>%mutate(
+      coef=coef+coef0$s0/count/10,
+      used_rate=ifelse(coef0$s0!=0,used_rate+1/count/10,used_rate)) 
+  }
 }
 mean_model_coef<-mean_model_coef%>%mutate(coef=round(coef, digits =6))
 
 
 #結果ファイル出力
+write.csv(mean_test_result,"mean_model_test.csv",row.names = F)
+write.csv(mean_model_coef,"mean_model_coef.csv",row.names = F)
 print(paste(Sys.time(),"Output File",sep = " : "))
 mean_test_result<-mean_test_result%>%rename(Survived=fit)
 mean_test_result<-mean_test_result%>%mutate(Survived=ifelse(Survived>=0.5,1,0))
