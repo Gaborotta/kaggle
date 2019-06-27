@@ -161,7 +161,7 @@ grid_data<-data.table(child_age=rep(1:30,each=30),lambda=rep(seq(0.01,0.30,0.01)
 clusterExport(cluster,"grid_data")
 
 #並列処理実行
-num=1:16
+num=1:40
 print(paste(Sys.time(),"Run Parallel",sep = " : "))
 system.time(par_data <- parLapply(cluster,num,LR))
 stopCluster(cluster)

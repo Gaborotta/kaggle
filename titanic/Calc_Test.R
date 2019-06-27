@@ -38,7 +38,7 @@ Prep<-function(train,result=NULL){
   train0<-train0%>%mutate(With_Family=Family-Not_With_Family)
   
   #不要変数の削除
-  train0<-train0%>%select(-Name,-Ticket,-PassengerId,-Family,-Not_With_Family,Party_Num,-Party_Num)
+  train0<-train0%>%select(-Name,-Ticket,-Family,-Not_With_Family,Party_Num,-Party_Num)
   
   #Ageは他列の値を参考に重回帰で求めておく。
   #ID,Name、Ticketはそれ自体は無関係判断。
@@ -73,19 +73,18 @@ Prep<-function(train,result=NULL){
 #ロジスティック回帰
 #データの8割を学習データとして、10交差検証し、予測値の平均値を求める。
 LR<-function(child_age,lambda){
-  
   i=child_age
   train_i<-train1%>%mutate(Is_Child=ifelse(Age<=i,1,0),Is_Child=factor(Is_Child))
   test_i<-test1%>%mutate(Is_Child=ifelse(Age<=i,1,0),Is_Child=factor(Is_Child))
   
-  train_formula<-Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family
+  train_formula<-Survived~.+Is_Child:Age+Is_Child:Sex+Sex:With_Family+SibSp:With_Family+Parch:With_Family-PassengerId
   train_i_x<-as.matrix(build.x(train_formula,data = train_i)[,-1])
   train_i_y<-as.matrix(build.y(train_formula,data = train_i))
-  train_i<-data.table(train_i_y,train_i_x)%>%rename(Survived=V1)
+  train_i<-data.table(PassengerId=train_i$PassengerId,train_i_y,train_i_x)%>%rename(Survived=V1)
   
   test_i<-test_i%>%mutate(Survived=0)
   test_i_x<-as.matrix(build.x(train_formula,data = test_i)[,-1])
-  test_i<-data.table(test_i_x)
+  test_i<-data.table(PassengerId=test_i$PassengerId,test_i_x)
   
   #k交差検証準備
   count=10
@@ -102,35 +101,35 @@ LR<-function(child_age,lambda){
   #学習
   #glmnetでL1正則化
   for (train_split in train_folds$splits){
-    train_split<-train_folds$splits[[1]]  
+    #train_split<-train_folds$splits[[1]]  
     
     train0<-data.table(analysis(train_split))
-    train_x<-as.matrix(train0%>%select(-Survived))
+    train_x<-as.matrix(train0%>%select(-Survived,-PassengerId))
     train_y<-as.matrix(train0%>%select(Survived))
     result = glmnet(train_x,train_y,family="binomial",alpha=1,lambda = lambda)
     
     #交差検証データで予測
     train_test0<-data.table(assessment(train_split))
-    train_test_x<-as.matrix(train_test0%>%select(-Survived))
+    train_test_x<-as.matrix(train_test0%>%select(-Survived,-PassengerId))
     train_predict<-predict(result,train_test_x,s=result$lambda,type='response')
     train_test0<-train_test0%>%mutate(fit=train_predict)
     cross_test_result<-cross_test_result%>%bind_rows(train_test0)
     
     #train_testで予測
-    new_train_test_x<-as.matrix(train_test%>%select(-Survived))
+    new_train_test_x<-as.matrix(train_test%>%select(-Survived,-PassengerId))
     train_test_predict<-predict(result,new_train_test_x,s=result$lambda,type='response')
     train_test_result<-train_test_result%>%mutate(fit=fit+train_test_predict[,1]/count)
     
     #testでデータ予測
-    test_x<-test_i_x
+    test_x<-as.matrix(test_i%>%select(-PassengerId))
     test_predict<-predict(result,test_x,s=result$lambda,type='response')
     test_result<-test_result%>%mutate(fit=fit+test_predict[,1]/count)
     
   }
   
-  cross_test_result<-cross_test_result%>%select(Survived,fit)
-  train_test_result<-train_test_result%>%select(Survived,fit)
-  test_result<-test_result%>%select(fit)
+  cross_test_result<-cross_test_result%>%select(PassengerId,Survived,fit)
+  train_test_result<-train_test_result%>%select(PassengerId,Survived,fit)
+  test_result<-test_result%>%select(PassengerId,fit)
   
   return(list(model=result,cross_train=cross_test_result,train=train_test_result,test=test_result))
 }
@@ -180,7 +179,7 @@ clusterExport(cluster,"LR")
 clusterExport(cluster,"calc_auc")
 
 #並列処理実行
-count=1600
+count=160
 num=1:count
 print(paste(Sys.time(),"Run Parallel",sep = " : "))
 system.time(par_data <- parLapply(cluster,num,get_LR_result))
@@ -188,9 +187,16 @@ stopCluster(cluster)
 
 #データ加工
 mean_test_result<-test%>%mutate(fit=0)%>%select(PassengerId,fit)
+coef0<-as.matrix(coef(par_data[[1]]$model))
+mean_model_coef<-data.table(name=row.names(coef0))%>%mutate(coef=0,used_rate=0)
 for(data in par_data){
   mean_test_result<-mean_test_result%>%mutate(fit=fit+data$test$fit/count)
+  coef0<-data.table(as.matrix(coef(data$model)))
+  mean_model_coef<-mean_model_coef%>%mutate(
+    coef=coef+coef0$s0/count,
+    used_rate=ifelse(coef0$s0!=0,used_rate+1/count,used_rate))
 }
+mean_model_coef<-mean_model_coef%>%mutate(coef=round(coef, digits =6))
 
 
 #結果ファイル出力
@@ -200,3 +206,5 @@ mean_test_result<-mean_test_result%>%mutate(Survived=ifelse(Survived>=0.5,1,0))
 write.csv(mean_test_result,"submission.csv",row.names = F)
 
 print(paste(Sys.time(),"Finish",sep = " : "))
+
+
