@@ -1,5 +1,5 @@
 ---
-title: "kaggle:Titanic"
+title: "kaggle:タイタニック号事故における生存者の傾向分析"
 author: "Gaborotta"
 date: "2019年6月27日"
 output: html_document
@@ -9,17 +9,182 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# 概要
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+・データ分析～予測のフローを再確認したかったので、kaggleに参加して勉強することに。  
+・kaggleコンテストで恐らく最も有名なコンペティション、「タイタニック号事故での生存者を予測する」に参加してみた(<https://www.kaggle.com/c/titanic>)。  
+・ロジスティック回帰モデルを使って生存者しやすい人の傾向把握と生存者の予測を行った。  
+・使用言語はR。  
+ 
+# データの観察とモデルの仮定
+## 生データの観察
+とりあえず今後使用するライブラリを全て読み込み。
+```{r message=FALSE}
+library(GGally)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(useful)
+library(ROCR)
+library(parallel)
+library(glmnet)
+library(rsample)
 ```
 
-## Including Plots
+続いて使用するデータの読み込み。
+データは上記コンペティションのサイトからダウンロード。
+```{r message=FALSE}
+train<-fread("./input/train.csv")
+```
+
+まずは`summary()`で内容をざっと確認。  
+`pclass`が社会経済的地位（1が上位）  
+`sibsp`が配偶者or兄弟の数  
+`parch`が親or子供の数  
+を表してるそうです。
+```{r}
+summary(train)
+```
+
+`Age`年齢でかなり欠損値が発生してるみたい。  
+
+文字列データの欠損値もありそうなので確認。
+```{r}
+sapply(train,function(y) sum(y==""| is.na(y)))
+```
+`Cabin`と`Embarked`(乗船場所)でも欠損値があるみたい。  
+`Cabin`はほとんどが欠損。
+
+次に相関関係と各変数の分布をざざっとプロット。
+```{r message=FALSE,warning=FALSE}
+ggpairs(train%>%select(-PassengerId,-Name,-Ticket,-Cabin)%>%mutate(Survived=factor(Survived)))
+```
+
+※図が小さくて見にくくなってしまうので、サイズを大きく指定してPDFか何かで出力するとちゃんと見れます。
+  
+残りの変数についても表できちんと確認しておく。
+```{r}
+head(train)
+```
+
+というわけで以下ざっとデータを見た感想とデータの加工方法についての考え。  
+・`cabin`は欠損が多い。B～はあるが、Aはなし。省略されてるのかな？  
+・`cabin`は頭文字の種別で新規変数作って扱うといいかと。欠損はAにしておく。  
+・F G〇〇,F E〇〇といった記号が２つの人物がいる。これは後者の数字の前の記号をあてにした方が良さげかな。  
+・あとTというのが一人だけいる。邪魔なのでAにしておく。生き残れてないし。    
+・`Embarked`は欠損2名あり。中央値に変更。    
+・`Age` `NA`がかなりいる。データとしても重要と思われるので、補完の必要あり。後述。  
+・`Ticket`が同一　⇒　一緒に購入？　家族もしくは知人関係の可能性大。同一購入者数を新規変数として作る。
+  
+・女性と子供が多く生き残ったという通説があるので、子供フラグを新規作成したい。  
+・子供の境界は10歳くらいかな？後でハイパーパラメータとしてモデルの精度を見ながら妥当な値を決定する。  
+・`ID`,`Name`,`Ticket`はそれ自体は生存に無関係と判断。
+
+## 続いてデータの加工
+まずは`Embarked`が`NA`のデータを中央値に変更、`Cabin`が「空白」もしくは「T」を「A」に変更。
+```{r}
+train0<-train%>%mutate(Embarked=ifelse(Embarked == "",median(Embarked),Embarked),
+                       Cabin=ifelse(Cabin==""|Cabin=="T","A",Cabin))
+```
+
+次に`Cabin`を先頭のアルファベットのみに変更
+```{r}
+train0<-train0%>%separate(col = Cabin, into = c("Cabin1","Cabin2","Cabin3","Cabin4"), sep = " ",fill="right")
+train0<-train0%>%mutate(Cabin1=substr(Cabin1,1,1),Cabin2=substr(Cabin2,1,1))
+train0<-train0%>%mutate(Cabin2=ifelse(is.na(Cabin2),Cabin1,Cabin2),Cabin=ifelse(Cabin1==Cabin2,Cabin1,Cabin2))
+train0<-train0%>%select(-Cabin1,-Cabin2,-Cabin3,-Cabin4)
+```
+
+続いて同じチケットを買った人数を集計。  
+`party_num`として新規変数に格納。
+```{r}
+party_num<-train%>%group_by(Ticket)%>%summarise(Party_Num=n())
+train0<-train0%>%left_join(party_num,by="Ticket")
+```
+
+`SibSp`と`Parch`から同乗している家族の人数を計算（本人も含む）。  
+同乗している家族であっても、チケット番号が違うのであれば別行動しているものとして考える。  
+例えば、普段は離れて暮らす老夫婦と子供夫婦が同乗している場合など。  
+`party_num`が一緒に行動している人数と考え、別行動している家族の人数を`Not_With_Family`として計算。
+`Not_With_Family`が０以下になっている場合、知人と行動していると考えられる。`With_Friends`として人数を計算。  
+また、上記の場合には別行動の家族`Not_With_Family`は０人とする。
+最終的に共に行動している家族の人数（本人含む）を`With_Family`として計算する。
+
+```{r}
+train0<-train0%>%mutate(Family=SibSp+Parch+1,Not_With_Family=Family-Party_Num)
+train0<-train0%>%mutate(With_Friends=ifelse(Not_With_Family<=0,Party_Num-Family,0),Not_With_Family=ifelse(Not_With_Family<=0,0,Not_With_Family))
+train0<-train0%>%mutate(With_Family=Family-Not_With_Family)
+```
+
+先ほど作成した家族、知人の人数は全部残しておくとモデル構築に支障がでるので`With_Family`と`With_Friends`だけ残しておく。  
+その他、現時点で必要のない変数は削除しておく。
+```{r}
+train0<-train0%>%select(-Name,-Ticket,-PassengerId,-Family,-Not_With_Family,Party_Num,-Party_Num)
+```
+
+## `Age`の欠損値補完
+`Age`は欠損していないデータを用いて重回帰モデルを構築し、予測値で補完する。  
+重回帰モデルは交互作用ありと無し、`step`関数による説明変数最適化有無の計4パターンで比較。  
+※交互作用ありモデルでは最適化してもEmbarked:CabinとCabin:With_Friendsでパラメータ`NA`が出たので外しておく。そもそも交互作用無さそうなのでOK。
+`summary`関数で結果を比較。
+
+```{r}
+age_train<-train0%>%select(-Survived)%>%filter(!is.na(Age))
+age_result1<-lm(Age~(.)^2-Embarked:Cabin-Cabin:With_Friends,age_train)
+age_result2<-lm(Age~.,age_train)
+age_result3<-step(age_result1)
+age_result4<-step(age_result2)
+
+summary(age_result1)
+summary(age_result2)
+summary(age_result3)
+summary(age_result4)
+```
+
+result3が最も決定係数が大きかったので採用。  
+年齢の補完精度が最終的なモデルにそこまで影響しないと思われるのでこの程度で。
+
+作成したモデルで`Age`の欠損値を補完。
+```{r}
+train0<-train0%>%mutate(Age=ifelse(is.na(Age),predict(age_result3,train0),Age))
+```
+
+続いて`Age`を基に子供かどうかのフラグ変数`Is_Child`を作成。
+```{r}
+train0<-train0%>%mutate(Age=ifelse(Age<0,0,Age),Is_Child=ifelse(Age<=10,1,0))
+```  
+
+データの内容を再確認。
+```{r}
+ggpairs(train0%>%mutate(Survived=factor(Survived),Is_Child=factor(Is_Child)))
+```
+
+`Sibsp`,`Parch`は大半が0なので、0人か1人か2人以上かに分類分けする。  
+同じく`With_Friends`は大半が0なので、0人か1人か2人以上か分類。  
+`With_Family`は1人、2人、3人、4人以上でまとめる。  
+最後にそれぞれ`factor`型に変換しておく。  
+
+```{r}
+train1<-train0%>%mutate(SibSp=ifelse(SibSp>=2,2,SibSp),Parch=ifelse(Parch>=2,2,Parch))
+train1<-train1%>%mutate(With_Friends=ifelse(With_Friends>=2,2,With_Friends))
+train1<-train1%>%mutate(With_Family=ifelse(With_Family>=4,4,With_Family))
+
+train1<-train1%>%mutate(With_Friends=factor(With_Friends),With_Family=factor(With_Family),Survived=factor(Survived),Is_Child=factor(Is_Child),SibSp=factor(SibSp),Parch=factor(Parch),Pclass=factor(Pclass))
+```
+
+もう一度データを再確認
+```{r}
+ggpairs(train1)
+```
+
+
+# モデルの構築とハイパーパラメータの決定
+
+
+
+
+
+# 結果の予測とモデルから見た生存者の傾向分析
 
 You can also embed plots, for example:
 

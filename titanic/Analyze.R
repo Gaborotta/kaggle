@@ -20,7 +20,7 @@ submission<-fread("./input/gender_submission.csv")
 #sibsp:配偶者or兄弟の数
 #parch:親or子供の数
 summary(train)
-summary(test)
+#summary(test)
 
 #欠損値確認
 sapply(train,function(y) sum(y==""| is.na(y)))
@@ -70,14 +70,14 @@ train0<-train0%>%select(-Name,-Ticket,-PassengerId,-Family,-Not_With_Family,Part
 #交互作用ありではEmbarked:CabinとCabin:With_FriendsでNAが出たので消去しておく。
 age_train<-train0%>%select(-Survived)%>%filter(!is.na(Age))
 age_result1<-lm(Age~(.)^2-Embarked:Cabin-Cabin:With_Friends,age_train)
-#age_result2<-lm(Age~.,age_train)
+age_result2<-lm(Age~.,age_train)
 age_result3<-step(age_result1)
-#age_result4<-step(age_result2)
+age_result4<-step(age_result2)
 
-#summary(age_result1)
-#summary(age_result2)
+summary(age_result1)
+summary(age_result2)
 summary(age_result3)
-#summary(age_result4)
+summary(age_result4)
 
 #result3が最も決定係数が大きかったので採用。
 train0<-train0%>%mutate(Age=ifelse(is.na(Age),predict(age_result3,train0),Age))
